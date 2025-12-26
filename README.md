@@ -21,6 +21,14 @@ Adapted for Claude Code by [Sergey Bulaev](https://github.com/sergebulaev) (crea
 
 ---
 
+## Changelog
+
+- **Adapted for Claude Code** — Reads data from `~/.claude/` directory instead of OpenCode
+- **Cached tokens included** — Total token count now includes cache read/write tokens for accurate usage stats
+- **Image upload** — Upload your wrapped image to get a shareable link (via catbox.moe)
+
+---
+
 ## Installation
 
 ### Quick Start
