@@ -1,5 +1,5 @@
 import type { WrappedStats, ModelStats, ProviderStats, WeekdayActivity, ProjectStats, ClaudeCodeStats, HistoryEntry } from "./types";
-import { collectStatsCache, collectHistory, collectProjects } from "./collector";
+import { collectStatsCache, collectHistory, collectProjects, findOldestLocalSessionTimestamp } from "./collector";
 import { getModelDisplayName } from "./models";
 import type { RemoteData } from "./remote-collector";
 
@@ -98,6 +98,13 @@ function mergeData(local: CollectedData, remotes: RemoteData[]): CollectedData {
           earliestDate = remote.statsCache.firstSessionDate;
         }
       }
+
+      // Check if session files have older data than stats-cache
+      if (remote.oldestSessionTimestamp) {
+        if (!earliestDate || remote.oldestSessionTimestamp < earliestDate) {
+          earliestDate = remote.oldestSessionTimestamp;
+        }
+      }
     }
 
     // Build merged stats cache
@@ -131,10 +138,11 @@ function mergeData(local: CollectedData, remotes: RemoteData[]): CollectedData {
 }
 
 export async function calculateStats(year: number, remoteData: RemoteData[] = []): Promise<WrappedStats> {
-  const [statsCache, history, projects] = await Promise.all([
+  const [statsCache, history, projects, oldestLocalTimestamp] = await Promise.all([
     collectStatsCache(),
     collectHistory(year),
     collectProjects(year),
+    findOldestLocalSessionTimestamp(),
   ]);
 
   // Merge local and remote data
@@ -169,12 +177,30 @@ export async function calculateStats(year: number, remoteData: RemoteData[] = []
     }
   }
 
-  // Calculate first session date
+  // Calculate first session date - check multiple sources for the oldest
   let firstSessionDate: Date;
   let daysSinceFirstSession: number;
+  let earliestTimestamp: string | null = null;
 
+  // Check stats cache
   if (mergedStats?.firstSessionDate) {
-    firstSessionDate = new Date(mergedStats.firstSessionDate);
+    earliestTimestamp = mergedStats.firstSessionDate;
+  }
+
+  // Check local session files (might be older than stats cache)
+  if (oldestLocalTimestamp && (!earliestTimestamp || oldestLocalTimestamp < earliestTimestamp)) {
+    earliestTimestamp = oldestLocalTimestamp;
+  }
+
+  // Check remote session files
+  for (const remote of remoteData) {
+    if (remote.oldestSessionTimestamp && (!earliestTimestamp || remote.oldestSessionTimestamp < earliestTimestamp)) {
+      earliestTimestamp = remote.oldestSessionTimestamp;
+    }
+  }
+
+  if (earliestTimestamp) {
+    firstSessionDate = new Date(earliestTimestamp);
     daysSinceFirstSession = Math.floor((Date.now() - firstSessionDate.getTime()) / (1000 * 60 * 60 * 24));
   } else if (mergedHistory.length > 0) {
     const firstTimestamp = Math.min(...mergedHistory.map((h) => h.timestamp));

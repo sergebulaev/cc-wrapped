@@ -7,6 +7,7 @@ export interface RemoteData {
   statsCache: ClaudeCodeStats | null;
   history: HistoryEntry[];
   projects: string[];
+  oldestSessionTimestamp: string | null;
 }
 
 async function execSSH(host: string, command: string): Promise<string> {
@@ -66,6 +67,23 @@ async function collectRemoteHistory(host: string, year?: number): Promise<Histor
   }
 }
 
+async function findOldestSessionTimestamp(host: string): Promise<string | null> {
+  try {
+    // Search session files for the oldest timestamp
+    const output = await execSSH(
+      host,
+      "grep -r '\"timestamp\"' ~/.claude/projects/ 2>/dev/null | grep -oE '\"timestamp\":\"[^\"]+\"' | sed 's/\"timestamp\":\"//' | sed 's/\"//' | sort | head -1"
+    );
+    const timestamp = output.trim();
+    if (timestamp && timestamp.match(/^\d{4}-\d{2}-\d{2}/)) {
+      return timestamp;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function extractProjects(history: HistoryEntry[]): string[] {
   const projects = new Set<string>();
 
@@ -84,12 +102,14 @@ async function collectFromRemoteHost(host: string, year?: number): Promise<Remot
   const statsCache = await collectRemoteStatsCache(host);
   const history = await collectRemoteHistory(host, year);
   const projects = extractProjects(history); // Derive from history, no extra SSH call
+  const oldestSessionTimestamp = await findOldestSessionTimestamp(host);
 
   return {
     host,
     statsCache,
     history,
     projects,
+    oldestSessionTimestamp,
   };
 }
 

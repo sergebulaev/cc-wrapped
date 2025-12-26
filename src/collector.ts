@@ -143,3 +143,54 @@ export async function collectProjects(year?: number): Promise<string[]> {
 
   return Array.from(projects);
 }
+
+// Find the oldest session timestamp by scanning session files
+export async function findOldestLocalSessionTimestamp(): Promise<string | null> {
+  const projectsPath = join(CLAUDE_DATA_PATH, "projects");
+
+  try {
+    const projectDirs = await readdir(projectsPath);
+    let oldestTimestamp: string | null = null;
+
+    for (const projectDir of projectDirs) {
+      const projectPath = join(projectsPath, projectDir);
+
+      try {
+        const files = await readdir(projectPath);
+        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
+
+        for (const jsonlFile of jsonlFiles) {
+          const filePath = join(projectPath, jsonlFile);
+
+          try {
+            const content = await readFile(filePath, "utf-8");
+            const lines = content.split("\n").slice(0, 10); // Check first 10 lines
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+
+              try {
+                const data = JSON.parse(line);
+                if (data.timestamp && typeof data.timestamp === "string") {
+                  if (!oldestTimestamp || data.timestamp < oldestTimestamp) {
+                    oldestTimestamp = data.timestamp;
+                  }
+                }
+              } catch {
+                // Skip invalid JSON
+              }
+            }
+          } catch {
+            // Skip unreadable files
+          }
+        }
+      } catch {
+        // Skip unreadable directories
+      }
+    }
+
+    return oldestTimestamp;
+  } catch {
+    return null;
+  }
+}
