@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 
 import { checkClaudeCodeDataExists, getClaudeDataPath } from "./collector";
 import { calculateStats } from "./stats";
+import { collectFromAllRemoteHosts, type RemoteData } from "./remote-collector";
 import { generateImage } from "./image/generator";
 import { displayInTerminal, getTerminalName } from "./terminal/display";
 import { copyImageToClipboard } from "./clipboard";
@@ -25,13 +26,15 @@ USAGE:
   cc-wrapped [OPTIONS]
 
 OPTIONS:
-  --year <YYYY>    Generate wrapped for a specific year (default: current year)
-  --help, -h       Show this help message
-  --version, -v    Show version number
+  --year <YYYY>       Generate wrapped for a specific year (default: current year)
+  --remote <hosts>    Include stats from remote hosts (comma-separated)
+  --help, -h          Show this help message
+  --version, -v       Show version number
 
 EXAMPLES:
-  cc-wrapped              # Generate current year wrapped
-  cc-wrapped --year 2025  # Generate 2025 wrapped
+  cc-wrapped                                      # Generate current year wrapped
+  cc-wrapped --year 2025                          # Generate 2025 wrapped
+  cc-wrapped --remote user@host1,user@host2       # Include remote hosts
 `);
 }
 
@@ -41,6 +44,7 @@ async function main() {
     args: process.argv.slice(2),
     options: {
       year: { type: "string", short: "y" },
+      remote: { type: "string", short: "r" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -80,12 +84,35 @@ async function main() {
     process.exit(0);
   }
 
+  // Collect from remote hosts if specified
+  const remoteHosts = values.remote ? values.remote.split(",").map((h) => h.trim()) : [];
+  let remoteData: RemoteData[] = [];
+
+  if (remoteHosts.length > 0) {
+    const remoteSpinner = p.spinner();
+    remoteSpinner.start(`Collecting from ${remoteHosts.length} remote host(s)...`);
+
+    try {
+      remoteData = await collectFromAllRemoteHosts(remoteHosts, requestedYear, (host, status) => {
+        if (status === "start") {
+          remoteSpinner.message(`Connecting to ${host}...`);
+        } else if (status === "done") {
+          remoteSpinner.message(`Collected from ${host}`);
+        }
+      });
+      remoteSpinner.stop(`Collected from ${remoteData.length} remote host(s)`);
+    } catch (error) {
+      remoteSpinner.stop("Failed to collect from remote hosts");
+      p.log.warn(`Remote collection error: ${error}`);
+    }
+  }
+
   const spinner = p.spinner();
   spinner.start("Scanning your Claude Code history...");
 
   let stats;
   try {
-    stats = await calculateStats(requestedYear);
+    stats = await calculateStats(requestedYear, remoteData);
   } catch (error) {
     spinner.stop("Failed to collect stats");
     p.cancel(`Error: ${error}`);

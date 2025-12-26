@@ -1,20 +1,154 @@
-import type { WrappedStats, ModelStats, ProviderStats, WeekdayActivity, ProjectStats } from "./types";
+import type { WrappedStats, ModelStats, ProviderStats, WeekdayActivity, ProjectStats, ClaudeCodeStats, HistoryEntry } from "./types";
 import { collectStatsCache, collectHistory, collectProjects } from "./collector";
 import { getModelDisplayName } from "./models";
+import type { RemoteData } from "./remote-collector";
 
-export async function calculateStats(year: number): Promise<WrappedStats> {
+interface CollectedData {
+  statsCache: ClaudeCodeStats | null;
+  history: HistoryEntry[];
+  projects: string[];
+}
+
+function mergeData(local: CollectedData, remotes: RemoteData[]): CollectedData {
+  // Merge history entries
+  const allHistory = [...local.history];
+  for (const remote of remotes) {
+    allHistory.push(...remote.history);
+  }
+
+  // Merge projects (unique)
+  const allProjects = new Set(local.projects);
+  for (const remote of remotes) {
+    for (const project of remote.projects) {
+      allProjects.add(project);
+    }
+  }
+
+  // Merge stats cache data
+  let mergedStatsCache = local.statsCache;
+
+  if (remotes.length > 0) {
+    // Start with local stats or create empty
+    const mergedDailyActivity = new Map<string, { messageCount: number; sessionCount: number; toolCallCount: number }>();
+    const mergedModelUsage = new Map<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }>();
+    let mergedTotalSessions = 0;
+    let mergedTotalMessages = 0;
+    let earliestDate: string | null = null;
+
+    // Process local stats
+    if (local.statsCache) {
+      for (const day of local.statsCache.dailyActivity) {
+        mergedDailyActivity.set(day.date, {
+          messageCount: day.messageCount,
+          sessionCount: day.sessionCount,
+          toolCallCount: day.toolCallCount,
+        });
+      }
+      for (const [modelId, usage] of Object.entries(local.statsCache.modelUsage)) {
+        mergedModelUsage.set(modelId, { ...usage });
+      }
+      mergedTotalSessions += local.statsCache.totalSessions;
+      mergedTotalMessages += local.statsCache.totalMessages;
+      earliestDate = local.statsCache.firstSessionDate;
+    }
+
+    // Merge remote stats
+    for (const remote of remotes) {
+      if (!remote.statsCache) continue;
+
+      for (const day of remote.statsCache.dailyActivity) {
+        const existing = mergedDailyActivity.get(day.date);
+        if (existing) {
+          existing.messageCount += day.messageCount;
+          existing.sessionCount += day.sessionCount;
+          existing.toolCallCount += day.toolCallCount;
+        } else {
+          mergedDailyActivity.set(day.date, {
+            messageCount: day.messageCount,
+            sessionCount: day.sessionCount,
+            toolCallCount: day.toolCallCount,
+          });
+        }
+      }
+
+      for (const [modelId, usage] of Object.entries(remote.statsCache.modelUsage)) {
+        const existing = mergedModelUsage.get(modelId);
+        if (existing) {
+          existing.inputTokens += usage.inputTokens || 0;
+          existing.outputTokens += usage.outputTokens || 0;
+          existing.cacheReadInputTokens += usage.cacheReadInputTokens || 0;
+          existing.cacheCreationInputTokens += usage.cacheCreationInputTokens || 0;
+          existing.costUSD += usage.costUSD || 0;
+        } else {
+          mergedModelUsage.set(modelId, {
+            inputTokens: usage.inputTokens || 0,
+            outputTokens: usage.outputTokens || 0,
+            cacheReadInputTokens: usage.cacheReadInputTokens || 0,
+            cacheCreationInputTokens: usage.cacheCreationInputTokens || 0,
+            costUSD: usage.costUSD || 0,
+          });
+        }
+      }
+
+      mergedTotalSessions += remote.statsCache.totalSessions;
+      mergedTotalMessages += remote.statsCache.totalMessages;
+
+      if (remote.statsCache.firstSessionDate) {
+        if (!earliestDate || remote.statsCache.firstSessionDate < earliestDate) {
+          earliestDate = remote.statsCache.firstSessionDate;
+        }
+      }
+    }
+
+    // Build merged stats cache
+    mergedStatsCache = {
+      version: 1,
+      lastComputedDate: new Date().toISOString().split("T")[0],
+      dailyActivity: Array.from(mergedDailyActivity.entries()).map(([date, data]) => ({
+        date,
+        ...data,
+      })),
+      dailyModelTokens: [],
+      modelUsage: Object.fromEntries(
+        Array.from(mergedModelUsage.entries()).map(([id, usage]) => [
+          id,
+          { ...usage, webSearchRequests: 0, contextWindow: 0 },
+        ])
+      ),
+      totalSessions: mergedTotalSessions,
+      totalMessages: mergedTotalMessages,
+      longestSession: local.statsCache?.longestSession || { sessionId: "", duration: 0, messageCount: 0, timestamp: "" },
+      firstSessionDate: earliestDate || new Date().toISOString(),
+      hourCounts: {},
+    };
+  }
+
+  return {
+    statsCache: mergedStatsCache,
+    history: allHistory,
+    projects: Array.from(allProjects),
+  };
+}
+
+export async function calculateStats(year: number, remoteData: RemoteData[] = []): Promise<WrappedStats> {
   const [statsCache, history, projects] = await Promise.all([
     collectStatsCache(),
     collectHistory(year),
     collectProjects(year),
   ]);
 
+  // Merge local and remote data
+  const merged = mergeData({ statsCache, history, projects }, remoteData);
+
+  // Use merged data
+  const { statsCache: mergedStats, history: mergedHistory, projects: mergedProjects } = merged;
+
   // Build daily activity map from stats cache or history
   const dailyActivity = new Map<string, number>();
   const weekdayCounts: [number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0];
 
-  if (statsCache?.dailyActivity) {
-    for (const day of statsCache.dailyActivity) {
+  if (mergedStats?.dailyActivity) {
+    for (const day of mergedStats.dailyActivity) {
       if (day.date.startsWith(String(year))) {
         dailyActivity.set(day.date, day.messageCount);
 
@@ -26,8 +160,8 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
   }
 
   // If no stats cache, build from history
-  if (dailyActivity.size === 0 && history.length > 0) {
-    for (const entry of history) {
+  if (dailyActivity.size === 0 && mergedHistory.length > 0) {
+    for (const entry of mergedHistory) {
       const date = new Date(entry.timestamp);
       const dateKey = formatDateKey(date);
       dailyActivity.set(dateKey, (dailyActivity.get(dateKey) || 0) + 1);
@@ -39,11 +173,11 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
   let firstSessionDate: Date;
   let daysSinceFirstSession: number;
 
-  if (statsCache?.firstSessionDate) {
-    firstSessionDate = new Date(statsCache.firstSessionDate);
+  if (mergedStats?.firstSessionDate) {
+    firstSessionDate = new Date(mergedStats.firstSessionDate);
     daysSinceFirstSession = Math.floor((Date.now() - firstSessionDate.getTime()) / (1000 * 60 * 60 * 24));
-  } else if (history.length > 0) {
-    const firstTimestamp = Math.min(...history.map((h) => h.timestamp));
+  } else if (mergedHistory.length > 0) {
+    const firstTimestamp = Math.min(...mergedHistory.map((h) => h.timestamp));
     firstSessionDate = new Date(firstTimestamp);
     daysSinceFirstSession = Math.floor((Date.now() - firstTimestamp) / (1000 * 60 * 60 * 24));
   } else {
@@ -60,9 +194,9 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
   let totalCacheWriteTokens = 0;
   let totalCost = 0;
 
-  if (statsCache) {
+  if (mergedStats) {
     // Sum up daily activity for the year
-    for (const day of statsCache.dailyActivity) {
+    for (const day of mergedStats.dailyActivity) {
       if (day.date.startsWith(String(year))) {
         totalMessages += day.messageCount;
         totalSessions += day.sessionCount;
@@ -70,7 +204,7 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
     }
 
     // Sum up model usage
-    for (const [, usage] of Object.entries(statsCache.modelUsage)) {
+    for (const [, usage] of Object.entries(mergedStats.modelUsage)) {
       totalInputTokens += usage.inputTokens || 0;
       totalOutputTokens += usage.outputTokens || 0;
       totalCacheReadTokens += usage.cacheReadInputTokens || 0;
@@ -80,21 +214,21 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
   }
 
   // If no stats cache, estimate from history
-  if (totalMessages === 0 && history.length > 0) {
-    totalMessages = history.length * 20; // Rough estimate
-    const uniqueSessions = new Set(history.map((h) => h.sessionId));
+  if (totalMessages === 0 && mergedHistory.length > 0) {
+    totalMessages = mergedHistory.length * 20; // Rough estimate
+    const uniqueSessions = new Set(mergedHistory.map((h) => h.sessionId));
     totalSessions = uniqueSessions.size;
   }
 
   const totalTokens = totalInputTokens + totalOutputTokens + totalCacheReadTokens + totalCacheWriteTokens;
-  const totalPrompts = history.length;
-  const totalProjects = projects.length;
+  const totalPrompts = mergedHistory.length;
+  const totalProjects = mergedProjects.length;
 
   // Build model stats
   const modelCounts = new Map<string, number>();
 
-  if (statsCache?.modelUsage) {
-    for (const [modelId, usage] of Object.entries(statsCache.modelUsage)) {
+  if (mergedStats?.modelUsage) {
+    for (const [modelId, usage] of Object.entries(mergedStats.modelUsage)) {
       // Use output tokens as the count metric
       modelCounts.set(modelId, usage.outputTokens || 0);
     }
@@ -125,7 +259,7 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
 
   // Build project stats
   const projectCounts = new Map<string, number>();
-  for (const entry of history) {
+  for (const entry of mergedHistory) {
     const projectName = entry.project.split("/").pop() || entry.project;
     projectCounts.set(projectName, (projectCounts.get(projectName) || 0) + 1);
   }
@@ -149,10 +283,10 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
   const weekdayActivity = buildWeekdayActivity(weekdayCounts);
 
   // Get longest session info
-  const longestSession = statsCache?.longestSession
+  const longestSession = mergedStats?.longestSession
     ? {
-        duration: statsCache.longestSession.duration,
-        messageCount: statsCache.longestSession.messageCount,
+        duration: mergedStats.longestSession.duration,
+        messageCount: mergedStats.longestSession.messageCount,
       }
     : null;
 
