@@ -5,127 +5,199 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ClaudeCodeStats, SessionMessage, HistoryEntry } from "./types";
 
-const CLAUDE_DATA_PATH = join(homedir(), ".claude");
+// Support both old and new Claude Code data locations
+const CLAUDE_DATA_PATHS = [
+  join(homedir(), ".claude"),           // Old default
+  join(homedir(), ".config", "claude"), // New default (since late 2025)
+];
+
+async function getValidClaudePaths(): Promise<string[]> {
+  const validPaths: string[] = [];
+  for (const path of CLAUDE_DATA_PATHS) {
+    try {
+      await readdir(path);
+      validPaths.push(path);
+    } catch {
+      // Path doesn't exist, skip
+    }
+  }
+  return validPaths;
+}
 
 export async function checkClaudeCodeDataExists(): Promise<boolean> {
-  try {
-    await readdir(CLAUDE_DATA_PATH);
-    return true;
-  } catch {
-    return false;
-  }
+  const paths = await getValidClaudePaths();
+  return paths.length > 0;
 }
 
 export async function getClaudeDataPath(): Promise<string> {
-  return CLAUDE_DATA_PATH;
+  const paths = await getValidClaudePaths();
+  return paths[0] || CLAUDE_DATA_PATHS[0];
+}
+
+export async function getAllClaudeDataPaths(): Promise<string[]> {
+  return getValidClaudePaths();
 }
 
 // Read the stats-cache.json file which contains pre-computed stats
+// Merges data from all valid Claude data directories
 export async function collectStatsCache(): Promise<ClaudeCodeStats | null> {
-  const statsPath = join(CLAUDE_DATA_PATH, "stats-cache.json");
+  const paths = await getValidClaudePaths();
+  let mergedStats: ClaudeCodeStats | null = null;
 
-  try {
-    const content = await Bun.file(statsPath).json();
-    return content as ClaudeCodeStats;
-  } catch {
-    return null;
-  }
-}
-
-// Read history.jsonl for prompt/project data
-export async function collectHistory(year?: number): Promise<HistoryEntry[]> {
-  const historyPath = join(CLAUDE_DATA_PATH, "history.jsonl");
-
-  try {
-    const content = await readFile(historyPath, "utf-8");
-    const lines = content.trim().split("\n");
-
-    const entries: HistoryEntry[] = [];
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-
-      try {
-        const entry = JSON.parse(line) as HistoryEntry;
-
-        // Filter by year if specified
-        if (year) {
-          const entryDate = new Date(entry.timestamp);
-          if (entryDate.getFullYear() !== year) continue;
+  for (const basePath of paths) {
+    const statsPath = join(basePath, "stats-cache.json");
+    try {
+      const content = await Bun.file(statsPath).json() as ClaudeCodeStats;
+      if (!mergedStats) {
+        mergedStats = content;
+      } else {
+        // Merge daily activity
+        const activityMap = new Map<string, { messageCount: number; sessionCount: number; toolCallCount: number }>();
+        for (const day of mergedStats.dailyActivity) {
+          activityMap.set(day.date, { messageCount: day.messageCount, sessionCount: day.sessionCount, toolCallCount: day.toolCallCount });
         }
-
-        entries.push(entry);
-      } catch {
-        // Skip invalid JSON lines
-      }
-    }
-
-    return entries;
-  } catch {
-    return [];
-  }
-}
-
-// Collect all session messages from project directories
-export async function collectSessionMessages(year?: number): Promise<SessionMessage[]> {
-  const projectsPath = join(CLAUDE_DATA_PATH, "projects");
-
-  try {
-    const projectDirs = await readdir(projectsPath);
-    const allMessages: SessionMessage[] = [];
-
-    for (const projectDir of projectDirs) {
-      const projectPath = join(projectsPath, projectDir);
-
-      try {
-        const files = await readdir(projectPath);
-        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
-
-        for (const jsonlFile of jsonlFiles) {
-          const filePath = join(projectPath, jsonlFile);
-
-          try {
-            const content = await readFile(filePath, "utf-8");
-            const lines = content.trim().split("\n");
-
-            for (const line of lines) {
-              if (!line.trim()) continue;
-
-              try {
-                const message = JSON.parse(line);
-
-                // Only process assistant messages with usage data
-                if (message.type === "assistant" && message.message?.usage) {
-                  const timestamp = new Date(message.timestamp);
-
-                  // Filter by year if specified
-                  if (year && timestamp.getFullYear() !== year) continue;
-
-                  allMessages.push({
-                    type: message.type,
-                    sessionId: message.sessionId,
-                    timestamp: message.timestamp,
-                    model: message.message?.model,
-                    usage: message.message?.usage,
-                  });
-                }
-              } catch {
-                // Skip invalid JSON lines
-              }
-            }
-          } catch {
-            // Skip unreadable files
+        for (const day of content.dailyActivity) {
+          const existing = activityMap.get(day.date);
+          if (existing) {
+            existing.messageCount += day.messageCount;
+            existing.sessionCount += day.sessionCount;
+            existing.toolCallCount += day.toolCallCount;
+          } else {
+            activityMap.set(day.date, { messageCount: day.messageCount, sessionCount: day.sessionCount, toolCallCount: day.toolCallCount });
           }
         }
-      } catch {
-        // Skip unreadable directories
-      }
-    }
+        mergedStats.dailyActivity = Array.from(activityMap.entries()).map(([date, data]) => ({ date, ...data }));
 
-    return allMessages;
-  } catch {
-    return [];
+        // Merge model usage
+        for (const [modelId, usage] of Object.entries(content.modelUsage)) {
+          if (mergedStats.modelUsage[modelId]) {
+            mergedStats.modelUsage[modelId].inputTokens += usage.inputTokens || 0;
+            mergedStats.modelUsage[modelId].outputTokens += usage.outputTokens || 0;
+            mergedStats.modelUsage[modelId].cacheReadInputTokens += usage.cacheReadInputTokens || 0;
+            mergedStats.modelUsage[modelId].cacheCreationInputTokens += usage.cacheCreationInputTokens || 0;
+            mergedStats.modelUsage[modelId].costUSD += usage.costUSD || 0;
+          } else {
+            mergedStats.modelUsage[modelId] = { ...usage };
+          }
+        }
+
+        // Merge totals
+        mergedStats.totalSessions += content.totalSessions;
+        mergedStats.totalMessages += content.totalMessages;
+
+        // Use earliest first session date
+        if (content.firstSessionDate < mergedStats.firstSessionDate) {
+          mergedStats.firstSessionDate = content.firstSessionDate;
+        }
+      }
+    } catch {
+      // Skip if file doesn't exist or is invalid
+    }
   }
+
+  return mergedStats;
+}
+
+// Read history.jsonl for prompt/project data from all Claude directories
+export async function collectHistory(year?: number): Promise<HistoryEntry[]> {
+  const paths = await getValidClaudePaths();
+  const allEntries: HistoryEntry[] = [];
+
+  for (const basePath of paths) {
+    const historyPath = join(basePath, "history.jsonl");
+    try {
+      const content = await readFile(historyPath, "utf-8");
+      const lines = content.trim().split("\n");
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          const entry = JSON.parse(line) as HistoryEntry;
+
+          // Filter by year if specified
+          if (year) {
+            const entryDate = new Date(entry.timestamp);
+            if (entryDate.getFullYear() !== year) continue;
+          }
+
+          allEntries.push(entry);
+        } catch {
+          // Skip invalid JSON lines
+        }
+      }
+    } catch {
+      // Skip if file doesn't exist
+    }
+  }
+
+  return allEntries;
+}
+
+// Collect all session messages from project directories (all Claude paths)
+export async function collectSessionMessages(year?: number): Promise<SessionMessage[]> {
+  const paths = await getValidClaudePaths();
+  const allMessages: SessionMessage[] = [];
+
+  for (const basePath of paths) {
+    const projectsPath = join(basePath, "projects");
+
+    try {
+      const projectDirs = await readdir(projectsPath);
+
+      for (const projectDir of projectDirs) {
+        const projectPath = join(projectsPath, projectDir);
+
+        try {
+          const files = await readdir(projectPath);
+          const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
+
+          for (const jsonlFile of jsonlFiles) {
+            const filePath = join(projectPath, jsonlFile);
+
+            try {
+              const content = await readFile(filePath, "utf-8");
+              const lines = content.trim().split("\n");
+
+              for (const line of lines) {
+                if (!line.trim()) continue;
+
+                try {
+                  const message = JSON.parse(line);
+
+                  // Only process assistant messages with usage data
+                  if (message.type === "assistant" && message.message?.usage) {
+                    const timestamp = new Date(message.timestamp);
+
+                    // Filter by year if specified
+                    if (year && timestamp.getFullYear() !== year) continue;
+
+                    allMessages.push({
+                      type: message.type,
+                      sessionId: message.sessionId,
+                      timestamp: message.timestamp,
+                      model: message.message?.model,
+                      usage: message.message?.usage,
+                    });
+                  }
+                } catch {
+                  // Skip invalid JSON lines
+                }
+              }
+            } catch {
+              // Skip unreadable files
+            }
+          }
+        } catch {
+          // Skip unreadable directories
+        }
+      }
+    } catch {
+      // Skip if projects directory doesn't exist
+    }
+  }
+
+  return allMessages;
 }
 
 // Get unique projects from history
@@ -146,126 +218,134 @@ export async function collectProjects(year?: number): Promise<string[]> {
 
 // Build daily activity from session files (for data not in stats-cache)
 export async function collectDailyActivityFromSessions(year?: number): Promise<Map<string, { messageCount: number; sessionCount: number }>> {
-  const projectsPath = join(CLAUDE_DATA_PATH, "projects");
+  const paths = await getValidClaudePaths();
   const dailyActivity = new Map<string, { messageCount: number; sessionCount: number }>();
   const sessionsPerDay = new Map<string, Set<string>>();
 
-  try {
-    const projectDirs = await readdir(projectsPath);
+  for (const basePath of paths) {
+    const projectsPath = join(basePath, "projects");
 
-    for (const projectDir of projectDirs) {
-      const projectPath = join(projectsPath, projectDir);
+    try {
+      const projectDirs = await readdir(projectsPath);
 
-      try {
-        const files = await readdir(projectPath);
-        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
+      for (const projectDir of projectDirs) {
+        const projectPath = join(projectsPath, projectDir);
 
-        for (const jsonlFile of jsonlFiles) {
-          const filePath = join(projectPath, jsonlFile);
-          const sessionId = jsonlFile.replace(".jsonl", "");
+        try {
+          const files = await readdir(projectPath);
+          const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
 
-          try {
-            const content = await readFile(filePath, "utf-8");
-            const lines = content.trim().split("\n");
+          for (const jsonlFile of jsonlFiles) {
+            const filePath = join(projectPath, jsonlFile);
+            const sessionId = jsonlFile.replace(".jsonl", "");
 
-            for (const line of lines) {
-              if (!line.trim()) continue;
+            try {
+              const content = await readFile(filePath, "utf-8");
+              const lines = content.trim().split("\n");
 
-              try {
-                const data = JSON.parse(line);
-                if (!data.timestamp) continue;
+              for (const line of lines) {
+                if (!line.trim()) continue;
 
-                const timestamp = new Date(data.timestamp);
-                if (year && timestamp.getFullYear() !== year) continue;
+                try {
+                  const data = JSON.parse(line);
+                  if (!data.timestamp) continue;
 
-                const dateKey = `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, "0")}-${String(timestamp.getDate()).padStart(2, "0")}`;
+                  const timestamp = new Date(data.timestamp);
+                  if (year && timestamp.getFullYear() !== year) continue;
 
-                // Count messages (both user and assistant)
-                if (data.type === "user" || data.type === "assistant") {
-                  const existing = dailyActivity.get(dateKey) || { messageCount: 0, sessionCount: 0 };
-                  existing.messageCount++;
-                  dailyActivity.set(dateKey, existing);
+                  const dateKey = `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, "0")}-${String(timestamp.getDate()).padStart(2, "0")}`;
 
-                  // Track unique sessions per day
-                  if (!sessionsPerDay.has(dateKey)) {
-                    sessionsPerDay.set(dateKey, new Set());
+                  // Count messages (both user and assistant)
+                  if (data.type === "user" || data.type === "assistant") {
+                    const existing = dailyActivity.get(dateKey) || { messageCount: 0, sessionCount: 0 };
+                    existing.messageCount++;
+                    dailyActivity.set(dateKey, existing);
+
+                    // Track unique sessions per day
+                    if (!sessionsPerDay.has(dateKey)) {
+                      sessionsPerDay.set(dateKey, new Set());
+                    }
+                    sessionsPerDay.get(dateKey)!.add(sessionId);
                   }
-                  sessionsPerDay.get(dateKey)!.add(sessionId);
+                } catch {
+                  // Skip invalid JSON
                 }
-              } catch {
-                // Skip invalid JSON
               }
+            } catch {
+              // Skip unreadable files
             }
-          } catch {
-            // Skip unreadable files
           }
+        } catch {
+          // Skip unreadable directories
         }
-      } catch {
-        // Skip unreadable directories
       }
+    } catch {
+      // Skip if projects directory doesn't exist
     }
-
-    // Update session counts
-    for (const [dateKey, sessions] of sessionsPerDay.entries()) {
-      const existing = dailyActivity.get(dateKey);
-      if (existing) {
-        existing.sessionCount = sessions.size;
-      }
-    }
-
-    return dailyActivity;
-  } catch {
-    return new Map();
   }
+
+  // Update session counts
+  for (const [dateKey, sessions] of sessionsPerDay.entries()) {
+    const existing = dailyActivity.get(dateKey);
+    if (existing) {
+      existing.sessionCount = sessions.size;
+    }
+  }
+
+  return dailyActivity;
 }
 
-// Find the oldest session timestamp by scanning session files
+// Find the oldest session timestamp by scanning session files (all Claude paths)
 export async function findOldestLocalSessionTimestamp(): Promise<string | null> {
-  const projectsPath = join(CLAUDE_DATA_PATH, "projects");
+  const paths = await getValidClaudePaths();
+  let oldestTimestamp: string | null = null;
 
-  try {
-    const projectDirs = await readdir(projectsPath);
-    let oldestTimestamp: string | null = null;
+  for (const basePath of paths) {
+    const projectsPath = join(basePath, "projects");
 
-    for (const projectDir of projectDirs) {
-      const projectPath = join(projectsPath, projectDir);
+    try {
+      const projectDirs = await readdir(projectsPath);
 
-      try {
-        const files = await readdir(projectPath);
-        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
+      for (const projectDir of projectDirs) {
+        const projectPath = join(projectsPath, projectDir);
 
-        for (const jsonlFile of jsonlFiles) {
-          const filePath = join(projectPath, jsonlFile);
+        try {
+          const files = await readdir(projectPath);
+          const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
 
-          try {
-            const content = await readFile(filePath, "utf-8");
-            const lines = content.split("\n").slice(0, 10); // Check first 10 lines
+          for (const jsonlFile of jsonlFiles) {
+            const filePath = join(projectPath, jsonlFile);
 
-            for (const line of lines) {
-              if (!line.trim()) continue;
+            try {
+              const content = await readFile(filePath, "utf-8");
+              const lines = content.split("\n").slice(0, 10); // Check first 10 lines
 
-              try {
-                const data = JSON.parse(line);
-                if (data.timestamp && typeof data.timestamp === "string") {
-                  if (!oldestTimestamp || data.timestamp < oldestTimestamp) {
-                    oldestTimestamp = data.timestamp;
+              for (const line of lines) {
+                if (!line.trim()) continue;
+
+                try {
+                  const data = JSON.parse(line);
+                  if (data.timestamp && typeof data.timestamp === "string") {
+                    if (!oldestTimestamp || data.timestamp < oldestTimestamp) {
+                      oldestTimestamp = data.timestamp;
+                    }
                   }
+                } catch {
+                  // Skip invalid JSON
                 }
-              } catch {
-                // Skip invalid JSON
               }
+            } catch {
+              // Skip unreadable files
             }
-          } catch {
-            // Skip unreadable files
           }
+        } catch {
+          // Skip unreadable directories
         }
-      } catch {
-        // Skip unreadable directories
       }
+    } catch {
+      // Skip if projects directory doesn't exist
     }
-
-    return oldestTimestamp;
-  } catch {
-    return null;
   }
+
+  return oldestTimestamp;
 }

@@ -1,6 +1,7 @@
 import type { WrappedStats, ModelStats, ProviderStats, WeekdayActivity, ProjectStats, ClaudeCodeStats, HistoryEntry } from "./types";
 import { collectStatsCache, collectHistory, collectProjects, findOldestLocalSessionTimestamp, collectDailyActivityFromSessions } from "./collector";
 import { getModelDisplayName } from "./models";
+import { calculateTotalCost } from "./pricing";
 import type { RemoteData } from "./remote-collector";
 
 interface CollectedData {
@@ -289,6 +290,11 @@ export async function calculateStats(year: number, remoteData: RemoteData[] = []
       totalCacheReadTokens += usage.cacheReadInputTokens || 0;
       totalCacheWriteTokens += usage.cacheCreationInputTokens || 0;
       totalCost += usage.costUSD || 0;
+    }
+
+    // If no cost data from stats-cache, calculate from tokens using model pricing
+    if (totalCost === 0 && Object.keys(mergedStats.modelUsage).length > 0) {
+      totalCost = calculateTotalCost(mergedStats.modelUsage);
     }
   }
 
