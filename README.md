@@ -15,9 +15,9 @@ Generate a personalized "Spotify Wrapped"-style summary of your [Claude Code](ht
 
 ## Credits
 
-This project is based on [opencode-wrapped](https://github.com/moddi3/opencode-wrapped) by [moddi3 (Vlad Ivanov)](https://github.com/moddi3), adapted for Claude Code by [Sergey Bulaev](https://co.actor).
+This project is based on [opencode-wrapped](https://github.com/moddi3/opencode-wrapped) by [moddi3 (Vlad Ivanov)](https://github.com/moddi3).
 
-**Developed by:** [Co.Actor](https://co.actor) - AI Content Creation Solution
+Adapted for Claude Code by [Sergey Bulaev](https://github.com/sergebulaev) (creator of [Co.Actor](https://co.actor) - AI Content Creation Solution).
 
 ---
 
@@ -139,8 +139,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 Made with ❤️ for the [Claude Code](https://claude.ai/claude-code) community
 
-**Based on [opencode-wrapped](https://github.com/moddi3/opencode-wrapped) by [moddi3](https://github.com/moddi3)**
+Based on [opencode-wrapped](https://github.com/moddi3/opencode-wrapped) by [moddi3](https://github.com/moddi3)
 
-**Adapted by [Sergey Bulaev](https://co.actor) at [Co.Actor](https://co.actor)**
+Adapted by [Sergey Bulaev](https://github.com/sergebulaev) (creator of [Co.Actor](https://co.actor))
 
 </div>
