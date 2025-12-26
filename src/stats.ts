@@ -1,5 +1,5 @@
 import type { WrappedStats, ModelStats, ProviderStats, WeekdayActivity, ProjectStats, ClaudeCodeStats, HistoryEntry } from "./types";
-import { collectStatsCache, collectHistory, collectProjects, findOldestLocalSessionTimestamp } from "./collector";
+import { collectStatsCache, collectHistory, collectProjects, findOldestLocalSessionTimestamp, collectDailyActivityFromSessions } from "./collector";
 import { getModelDisplayName } from "./models";
 import type { RemoteData } from "./remote-collector";
 
@@ -7,6 +7,7 @@ interface CollectedData {
   statsCache: ClaudeCodeStats | null;
   history: HistoryEntry[];
   projects: string[];
+  sessionDailyActivity: Map<string, { messageCount: number; sessionCount: number }>;
 }
 
 function mergeData(local: CollectedData, remotes: RemoteData[]): CollectedData {
@@ -21,6 +22,29 @@ function mergeData(local: CollectedData, remotes: RemoteData[]): CollectedData {
   for (const remote of remotes) {
     for (const project of remote.projects) {
       allProjects.add(project);
+    }
+  }
+
+  // Merge session daily activity from all sources
+  const mergedSessionActivity = new Map<string, { messageCount: number; sessionCount: number }>();
+
+  // Add local session activity
+  for (const [date, data] of local.sessionDailyActivity.entries()) {
+    mergedSessionActivity.set(date, { ...data });
+  }
+
+  // Add remote session activity
+  for (const remote of remotes) {
+    if (remote.sessionDailyActivity) {
+      for (const [date, data] of remote.sessionDailyActivity.entries()) {
+        const existing = mergedSessionActivity.get(date);
+        if (existing) {
+          existing.messageCount += data.messageCount;
+          existing.sessionCount += data.sessionCount;
+        } else {
+          mergedSessionActivity.set(date, { ...data });
+        }
+      }
     }
   }
 
@@ -134,35 +158,51 @@ function mergeData(local: CollectedData, remotes: RemoteData[]): CollectedData {
     statsCache: mergedStatsCache,
     history: allHistory,
     projects: Array.from(allProjects),
+    sessionDailyActivity: mergedSessionActivity,
   };
 }
 
 export async function calculateStats(year: number, remoteData: RemoteData[] = []): Promise<WrappedStats> {
-  const [statsCache, history, projects, oldestLocalTimestamp] = await Promise.all([
+  const [statsCache, history, projects, oldestLocalTimestamp, localSessionActivity] = await Promise.all([
     collectStatsCache(),
     collectHistory(year),
     collectProjects(year),
     findOldestLocalSessionTimestamp(),
+    collectDailyActivityFromSessions(year),
   ]);
 
   // Merge local and remote data
-  const merged = mergeData({ statsCache, history, projects }, remoteData);
+  const merged = mergeData({ statsCache, history, projects, sessionDailyActivity: localSessionActivity }, remoteData);
 
   // Use merged data
-  const { statsCache: mergedStats, history: mergedHistory, projects: mergedProjects } = merged;
+  const { statsCache: mergedStats, history: mergedHistory, projects: mergedProjects, sessionDailyActivity: mergedSessionActivity } = merged;
 
-  // Build daily activity map from stats cache or history
+  // Build daily activity map - start with session-based activity (includes historical data)
   const dailyActivity = new Map<string, number>();
   const weekdayCounts: [number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0];
 
+  // First, add session-based activity (this includes data not in stats-cache)
+  for (const [dateKey, data] of mergedSessionActivity.entries()) {
+    if (dateKey.startsWith(String(year))) {
+      dailyActivity.set(dateKey, data.messageCount);
+      const date = new Date(dateKey);
+      weekdayCounts[date.getDay()] += data.messageCount;
+    }
+  }
+
+  // Then overlay stats-cache data (which may have more accurate counts for recent data)
   if (mergedStats?.dailyActivity) {
     for (const day of mergedStats.dailyActivity) {
       if (day.date.startsWith(String(year))) {
-        dailyActivity.set(day.date, day.messageCount);
-
-        // Calculate weekday
-        const date = new Date(day.date);
-        weekdayCounts[date.getDay()] += day.messageCount;
+        // Use the higher of the two counts (stats-cache tends to be more accurate for recent data)
+        const existingCount = dailyActivity.get(day.date) || 0;
+        if (day.messageCount > existingCount) {
+          // Adjust weekday counts
+          const date = new Date(day.date);
+          weekdayCounts[date.getDay()] -= existingCount;
+          weekdayCounts[date.getDay()] += day.messageCount;
+          dailyActivity.set(day.date, day.messageCount);
+        }
       }
     }
   }

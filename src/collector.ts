@@ -144,6 +144,81 @@ export async function collectProjects(year?: number): Promise<string[]> {
   return Array.from(projects);
 }
 
+// Build daily activity from session files (for data not in stats-cache)
+export async function collectDailyActivityFromSessions(year?: number): Promise<Map<string, { messageCount: number; sessionCount: number }>> {
+  const projectsPath = join(CLAUDE_DATA_PATH, "projects");
+  const dailyActivity = new Map<string, { messageCount: number; sessionCount: number }>();
+  const sessionsPerDay = new Map<string, Set<string>>();
+
+  try {
+    const projectDirs = await readdir(projectsPath);
+
+    for (const projectDir of projectDirs) {
+      const projectPath = join(projectsPath, projectDir);
+
+      try {
+        const files = await readdir(projectPath);
+        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
+
+        for (const jsonlFile of jsonlFiles) {
+          const filePath = join(projectPath, jsonlFile);
+          const sessionId = jsonlFile.replace(".jsonl", "");
+
+          try {
+            const content = await readFile(filePath, "utf-8");
+            const lines = content.trim().split("\n");
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+
+              try {
+                const data = JSON.parse(line);
+                if (!data.timestamp) continue;
+
+                const timestamp = new Date(data.timestamp);
+                if (year && timestamp.getFullYear() !== year) continue;
+
+                const dateKey = `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, "0")}-${String(timestamp.getDate()).padStart(2, "0")}`;
+
+                // Count messages (both user and assistant)
+                if (data.type === "user" || data.type === "assistant") {
+                  const existing = dailyActivity.get(dateKey) || { messageCount: 0, sessionCount: 0 };
+                  existing.messageCount++;
+                  dailyActivity.set(dateKey, existing);
+
+                  // Track unique sessions per day
+                  if (!sessionsPerDay.has(dateKey)) {
+                    sessionsPerDay.set(dateKey, new Set());
+                  }
+                  sessionsPerDay.get(dateKey)!.add(sessionId);
+                }
+              } catch {
+                // Skip invalid JSON
+              }
+            }
+          } catch {
+            // Skip unreadable files
+          }
+        }
+      } catch {
+        // Skip unreadable directories
+      }
+    }
+
+    // Update session counts
+    for (const [dateKey, sessions] of sessionsPerDay.entries()) {
+      const existing = dailyActivity.get(dateKey);
+      if (existing) {
+        existing.sessionCount = sessions.size;
+      }
+    }
+
+    return dailyActivity;
+  } catch {
+    return new Map();
+  }
+}
+
 // Find the oldest session timestamp by scanning session files
 export async function findOldestLocalSessionTimestamp(): Promise<string | null> {
   const projectsPath = join(CLAUDE_DATA_PATH, "projects");

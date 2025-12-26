@@ -8,6 +8,7 @@ export interface RemoteData {
   history: HistoryEntry[];
   projects: string[];
   oldestSessionTimestamp: string | null;
+  sessionDailyActivity: Map<string, { messageCount: number; sessionCount: number }>;
 }
 
 async function execSSH(host: string, command: string): Promise<string> {
@@ -84,6 +85,37 @@ async function findOldestSessionTimestamp(host: string): Promise<string | null> 
   }
 }
 
+async function collectDailyActivityFromSessions(host: string, year?: number): Promise<Map<string, { messageCount: number; sessionCount: number }>> {
+  const dailyActivity = new Map<string, { messageCount: number; sessionCount: number }>();
+
+  try {
+    // Extract all timestamps from user/assistant messages in session files
+    // Use -E for extended regex (ERE) which doesn't need escaping for |
+    const yearFilter = year ? `grep '${year}-' |` : "";
+    const output = await execSSH(
+      host,
+      `grep -rEh '"type":"(user|assistant)"' ~/.claude/projects/ 2>/dev/null | grep -oE '"timestamp":"[^"]+"' | sed 's/"timestamp":"//' | sed 's/"//' | cut -c1-10 | ${yearFilter} sort | uniq -c`
+    );
+
+    if (!output.trim()) return dailyActivity;
+
+    // Parse output: each line is "  count date"
+    const lines = output.trim().split("\n");
+    for (const line of lines) {
+      const match = line.trim().match(/^(\d+)\s+(\d{4}-\d{2}-\d{2})$/);
+      if (match) {
+        const count = parseInt(match[1], 10);
+        const date = match[2];
+        dailyActivity.set(date, { messageCount: count, sessionCount: 1 });
+      }
+    }
+
+    return dailyActivity;
+  } catch {
+    return dailyActivity;
+  }
+}
+
 function extractProjects(history: HistoryEntry[]): string[] {
   const projects = new Set<string>();
 
@@ -103,6 +135,7 @@ async function collectFromRemoteHost(host: string, year?: number): Promise<Remot
   const history = await collectRemoteHistory(host, year);
   const projects = extractProjects(history); // Derive from history, no extra SSH call
   const oldestSessionTimestamp = await findOldestSessionTimestamp(host);
+  const sessionDailyActivity = await collectDailyActivityFromSessions(host, year);
 
   return {
     host,
@@ -110,6 +143,7 @@ async function collectFromRemoteHost(host: string, year?: number): Promise<Remot
     history,
     projects,
     oldestSessionTimestamp,
+    sessionDailyActivity,
   };
 }
 
