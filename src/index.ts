@@ -4,27 +4,25 @@ import * as p from "@clack/prompts";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
-import { xdgData } from "xdg-basedir";
-
-import { checkOpenCodeDataExists } from "./collector";
+import { checkClaudeCodeDataExists, getClaudeDataPath } from "./collector";
 import { calculateStats } from "./stats";
 import { generateImage } from "./image/generator";
 import { displayInTerminal, getTerminalName } from "./terminal/display";
 import { copyImageToClipboard } from "./clipboard";
 import { isWrappedAvailable } from "./utils/dates";
 import { formatNumber } from "./utils/format";
-import type { OpenCodeStats } from "./types";
+import type { WrappedStats } from "./types";
 
 const VERSION = "1.0.0";
 
 function printHelp() {
   console.log(`
-oc-wrapped v${VERSION}
+cc-wrapped v${VERSION}
 
-Generate your OpenCode year in review stats card.
+Generate your Claude Code year in review stats card.
 
 USAGE:
-  oc-wrapped [OPTIONS]
+  cc-wrapped [OPTIONS]
 
 OPTIONS:
   --year <YYYY>    Generate wrapped for a specific year (default: current year)
@@ -32,8 +30,8 @@ OPTIONS:
   --version, -v    Show version number
 
 EXAMPLES:
-  oc-wrapped              # Generate current year wrapped
-  oc-wrapped --year 2025  # Generate 2025 wrapped
+  cc-wrapped              # Generate current year wrapped
+  cc-wrapped --year 2025  # Generate 2025 wrapped
 `);
 }
 
@@ -56,11 +54,11 @@ async function main() {
   }
 
   if (values.version) {
-    console.log(`oc-wrapped v${VERSION}`);
+    console.log(`cc-wrapped v${VERSION}`);
     process.exit(0);
   }
 
-  p.intro("opencode wrapped");
+  p.intro("claude code wrapped");
 
   const requestedYear = values.year ? parseInt(values.year, 10) : new Date().getFullYear();
 
@@ -75,14 +73,15 @@ async function main() {
     process.exit(0);
   }
 
-  const dataExists = await checkOpenCodeDataExists();
+  const dataExists = await checkClaudeCodeDataExists();
   if (!dataExists) {
-    p.cancel(`OpenCode data not found in ${xdgData}/opencode\n\nMake sure you have used OpenCode at least once.`);
+    const dataPath = await getClaudeDataPath();
+    p.cancel(`Claude Code data not found in ${dataPath}\n\nMake sure you have used Claude Code at least once.`);
     process.exit(0);
   }
 
   const spinner = p.spinner();
-  spinner.start("Scanning your OpenCode history...");
+  spinner.start("Scanning your Claude Code history...");
 
   let stats;
   try {
@@ -93,9 +92,9 @@ async function main() {
     process.exit(1);
   }
 
-  if (stats.totalSessions === 0) {
+  if (stats.totalSessions === 0 && stats.totalPrompts === 0) {
     spinner.stop("No data found");
-    p.cancel(`No OpenCode activity found for ${requestedYear}`);
+    p.cancel(`No Claude Code activity found for ${requestedYear}`);
     process.exit(0);
   }
 
@@ -105,14 +104,14 @@ async function main() {
   const summaryLines = [
     `Sessions:      ${formatNumber(stats.totalSessions)}`,
     `Messages:      ${formatNumber(stats.totalMessages)}`,
+    `Prompts:       ${formatNumber(stats.totalPrompts)}`,
     `Total Tokens:  ${formatNumber(stats.totalTokens)}`,
     `Projects:      ${formatNumber(stats.totalProjects)}`,
     `Streak:        ${stats.maxStreak} days`,
-    stats.hasZenUsage && `Zen Cost:      ${stats.totalCost.toFixed(2)}$`,
     stats.mostActiveDay && `Most Active:   ${stats.mostActiveDay.formattedDate}`,
   ];
 
-  p.note(summaryLines.join("\n"), `Your ${requestedYear} in OpenCode`);
+  p.note(summaryLines.filter(Boolean).join("\n"), `Your ${requestedYear} in Claude Code`);
 
   // Generate image
   spinner.start("Generating your wrapped image...");
@@ -133,7 +132,7 @@ async function main() {
     p.log.info(`Terminal (${getTerminalName()}) doesn't support inline images`);
   }
 
-  const filename = `oc-wrapped-${requestedYear}.png`;
+  const filename = `cc-wrapped-${requestedYear}.png`;
   const { success, error } = await copyImageToClipboard(image.fullSize, filename);
 
   if (success) {
@@ -184,16 +183,16 @@ async function main() {
   process.exit(0);
 }
 
-function generateTweetUrl(stats: OpenCodeStats): string {
+function generateTweetUrl(stats: WrappedStats): string {
   const text = [
-    `my ${stats.year} opencode wrapped:`,
+    `my ${stats.year} claude code wrapped:`,
     ``,
     `${formatNumber(stats.totalSessions)} sessions`,
     `${formatNumber(stats.totalMessages)} messages`,
     `${formatNumber(stats.totalTokens)} tokens`,
     `${stats.maxStreak} day streak`,
     ``,
-    `get yours: npx oc-wrapped`,
+    `get yours: npx cc-wrapped`,
   ].join("\n");
 
   const url = new URL("https://x.com/intent/tweet");

@@ -1,13 +1,9 @@
-import type { OpenCodeStats, WeekdayActivity } from "../types";
-import { formatNumber, formatCost, formatShortDate, formatDate } from "../utils/format";
+import type { WrappedStats, WeekdayActivity } from "../types";
+import { formatNumber, formatDate } from "../utils/format";
 import { ActivityHeatmap } from "./heatmap";
-import { getProviderLogoUrl } from "../models";
 import { colors, typography, spacing, layout, components } from "./design-tokens";
-import logo from "../../assets/images/opencode-wordmark-simple-dark.svg" with { type: 'text' }
 
-const OPENCODE_LOGO_DATA_URL = `data:image/svg+xml;base64,${Buffer.from(logo).toString("base64")}`;
-
-export function WrappedTemplate({ stats }: { stats: OpenCodeStats }) {
+export function WrappedTemplate({ stats }: { stats: WrappedStats }) {
   return (
     <div
       style={{
@@ -81,10 +77,9 @@ export function WrappedTemplate({ stats }: { stats: OpenCodeStats }) {
           }))}
         />
         <RankingList
-          title="Providers"
-          items={stats.topProviders.map((p) => ({
+          title="Top Projects"
+          items={stats.topProjects.map((p) => ({
             name: p.name,
-            logoUrl: getProviderLogoUrl(p.id),
           }))}
         />
       </div>
@@ -101,16 +96,38 @@ function Header({ year }: { year: number }) {
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: spacing[3],
+        gap: spacing[2],
       }}
     >
-      <img
-        src={OPENCODE_LOGO_DATA_URL}
-        height={160}
+      <div
         style={{
-          objectFit: "contain",
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing[4],
         }}
-      />
+      >
+        <span
+          style={{
+            fontSize: 72,
+            fontWeight: typography.weight.bold,
+            color: "#D97706",
+            letterSpacing: "-0.02em",
+          }}
+        >
+          Claude
+        </span>
+        <span
+          style={{
+            fontSize: 72,
+            fontWeight: typography.weight.regular,
+            color: colors.text.primary,
+            letterSpacing: "-0.02em",
+          }}
+        >
+          Code
+        </span>
+      </div>
 
       <span
         style={{
@@ -215,7 +232,7 @@ function WeeklyBarChart({ weekdayActivity }: { weekdayActivity: WeekdayActivity 
               style={{
                 width: BAR_WIDTH,
                 height: barHeight,
-                backgroundColor: isHighlighted ? colors.accent.primary : colors.heatmap.level2,
+                backgroundColor: isHighlighted ? "#D97706" : colors.heatmap.level2,
                 borderRadius: 4,
               }}
             />
@@ -241,7 +258,7 @@ function WeeklyBarChart({ weekdayActivity }: { weekdayActivity: WeekdayActivity 
                 justifyContent: "center",
                 fontSize: typography.size.sm,
                 fontWeight: isHighlighted ? typography.weight.bold : typography.weight.regular,
-                color: isHighlighted ? colors.accent.primary : colors.text.muted,
+                color: isHighlighted ? "#D97706" : colors.text.muted,
               }}
             >
               {label}
@@ -312,9 +329,13 @@ function RankingList({ title, items }: { title: string; items: RankingItem[] }) 
           gap: spacing[4],
         }}
       >
-        {items.map((item, i) => (
-          <RankingItemRow key={i} rank={i + 1} name={item.name} logoUrl={item.logoUrl} />
-        ))}
+        {items.length === 0 ? (
+          <span style={{ color: colors.text.muted, fontSize: typography.size.base }}>No data</span>
+        ) : (
+          items.map((item, i) => (
+            <RankingItemRow key={i} rank={i + 1} name={item.name} logoUrl={item.logoUrl} />
+          ))
+        )}
       </div>
     </div>
   );
@@ -372,9 +393,7 @@ function RankingItemRow({ rank, name, logoUrl }: RankingItemRowProps) {
   );
 }
 
-function StatsGrid({ stats }: { stats: OpenCodeStats }) {
-  const hasZen = stats.hasZenUsage;
-
+function StatsGrid({ stats }: { stats: WrappedStats }) {
   return (
     <div
       style={{
@@ -384,34 +403,19 @@ function StatsGrid({ stats }: { stats: OpenCodeStats }) {
         gap: spacing[5],
       }}
     >
-      {hasZen ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: spacing[5] }}>
-          <div style={{ display: "flex", gap: spacing[5] }}>
-            <StatBox label="Sessions" value={formatNumber(stats.totalSessions)} />
-            <StatBox label="Messages" value={formatNumber(stats.totalMessages)} />
-            <StatBox label="Total Tokens" value={formatNumber(stats.totalTokens)} />
-          </div>
-
-          <div style={{ display: "flex", gap: spacing[5] }}>
-            <StatBox label="Projects" value={formatNumber(stats.totalProjects)} />
-            <StatBox label="Streak" value={`${stats.maxStreak}d`} />
-            <StatBox label="OpenCode Zen Cost" value={formatCost(stats.totalCost)} />
-          </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: spacing[5] }}>
+        <div style={{ display: "flex", gap: spacing[5] }}>
+          <StatBox label="Sessions" value={formatNumber(stats.totalSessions)} />
+          <StatBox label="Messages" value={formatNumber(stats.totalMessages)} />
+          <StatBox label="Prompts" value={formatNumber(stats.totalPrompts)} />
         </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: spacing[5] }}>
-          <div style={{ display: "flex", gap: spacing[5] }}>
-            <StatBox label="Sessions" value={formatNumber(stats.totalSessions)} />
-            <StatBox label="Messages" value={formatNumber(stats.totalMessages)} />
-            <StatBox label="Tokens" value={formatNumber(stats.totalTokens)} />
-          </div>
 
-          <div style={{ display: "flex", gap: spacing[5] }}>
-            <StatBox label="Projects" value={formatNumber(stats.totalProjects)} />
-            <StatBox label="Streak" value={`${stats.maxStreak}d`} />
-          </div>
+        <div style={{ display: "flex", gap: spacing[5] }}>
+          <StatBox label="Projects" value={formatNumber(stats.totalProjects)} />
+          <StatBox label="Streak" value={`${stats.maxStreak}d`} />
+          <StatBox label="Tokens" value={formatNumber(stats.totalTokens)} />
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -484,7 +488,7 @@ function Footer() {
           letterSpacing: typography.letterSpacing.normal,
         }}
       >
-        opencode.ai
+        claude.ai/claude-code
       </span>
     </div>
   );

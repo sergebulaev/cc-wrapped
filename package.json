@@ -1,21 +1,30 @@
 {
-  "name": "oc-wrapped",
+  "name": "cc-wrapped",
   "version": "1.0.0",
   "author": {
-    "name": "moddi3 (Vlad Ivanov)",
-    "email": "oss@moddi3.com"
+    "name": "Sergey Bulaev",
+    "url": "https://co.actor"
   },
-  "description": "Generate a personalized Spotify Wrapped-style summary of your OpenCode usage",
+  "contributors": [
+    {
+      "name": "moddi3 (Vlad Ivanov)",
+      "email": "oss@moddi3.com",
+      "url": "https://github.com/moddi3/opencode-wrapped"
+    }
+  ],
+  "description": "Generate a personalized Spotify Wrapped-style summary of your Claude Code usage",
   "keywords": [
-    "opencode",
+    "claude",
+    "claude-code",
     "wrapped",
-    "opencode-wrapped",
-    "oc-wrapped"
+    "claude-code-wrapped",
+    "cc-wrapped",
+    "anthropic"
   ],
   "license": "MIT",
   "type": "module",
   "bin": {
-    "oc-wrapped": "./bin/oc-wrapped"
+    "cc-wrapped": "./bin/cc-wrapped"
   },
   "scripts": {
     "start": "bun src/index.ts",
@@ -29,8 +38,7 @@
     "@clack/prompts": "^0.11.0",
     "@resvg/resvg-wasm": "^2.6.2",
     "react": "^19.2.3",
-    "satori": "^0.18.3",
-    "xdg-basedir": "^5.1.0"
+    "satori": "^0.18.3"
   },
   "devDependencies": {
     "@semantic-release/exec": "^7.1.0",

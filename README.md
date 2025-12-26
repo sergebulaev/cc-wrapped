@@ -1,17 +1,23 @@
 <div align="center">
 
-# oc-wrapped
+# cc-wrapped
 
-**Your year in code, beautifully visualized.**
+**Your year in code with Claude, beautifully visualized.**
 
-Generate a personalized "Spotify Wrapped"-style summary of your [OpenCode](https://opencode.ai) usage.
+Generate a personalized "Spotify Wrapped"-style summary of your [Claude Code](https://claude.ai/claude-code) usage.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/Bun-%23000000.svg?logo=bun&logoColor=white)](https://bun.sh)
 
-<img src="./assets/images/demo-wrapped.png" alt="OpenCode Wrapped Example" width="600" />
-
 </div>
+
+---
+
+## Credits
+
+This project is based on [opencode-wrapped](https://github.com/moddi3/opencode-wrapped) by [moddi3 (Vlad Ivanov)](https://github.com/moddi3), adapted for Claude Code by [Sergey Bulaev](https://co.actor).
+
+**Developed by:** [Co.Actor](https://co.actor) - AI Content Creation Solution
 
 ---
 
@@ -22,19 +28,19 @@ Generate a personalized "Spotify Wrapped"-style summary of your [OpenCode](https
 Run directly without installing:
 
 ```bash
-npx oc-wrapped # or bunx, or yarn/pnpm dlx
+npx cc-wrapped # or bunx, or yarn/pnpm dlx
 ```
 
 ### Global Install
 
 ```bash
-npm install -g oc-wrapped # or bun/yarn/pnpm
+npm install -g cc-wrapped # or bun/yarn/pnpm
 ```
 
 Then run anywhere:
 
 ```bash
-oc-wrapped
+cc-wrapped
 ```
 
 ## Usage Options
@@ -47,10 +53,11 @@ oc-wrapped
 
 ## Features
 
-- Sessions, messages, tokens, projects, and streaks
+- Sessions, messages, prompts, tokens, and projects tracking
 - GitHub-style activity heatmap
-- Top models and providers breakdown
-- OpenCode Zen cost tracking
+- Top models breakdown (Opus, Sonnet, Haiku)
+- Top projects breakdown
+- Daily streak tracking
 - Shareable PNG image
 - Inline image display (Ghostty, Kitty, iTerm2, WezTerm, Konsole)
 - Auto-copy to clipboard
@@ -78,11 +85,16 @@ The tool generates:
 
 ## Data Source
 
-OpenCode Wrapped reads data from your local OpenCode installation. It follows the XDG Base Directory Specification:
+Claude Code Wrapped reads data from your local Claude Code installation:
 
 ```
-$XDG_DATA_HOME/opencode/ (usually ~/.local/share/opencode/)
+~/.claude/
 ```
+
+**Data sources used:**
+- `stats-cache.json` - Pre-computed usage statistics
+- `history.jsonl` - Prompt history and project data
+- `projects/` - Session data for detailed analysis
 
 No data is sent anywhere. Everything is processed locally.
 
@@ -125,6 +137,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-Made with ❤️ for the [OpenCode](https://opencode.ai) community
+Made with ❤️ for the [Claude Code](https://claude.ai/claude-code) community
+
+**Based on [opencode-wrapped](https://github.com/moddi3/opencode-wrapped) by [moddi3](https://github.com/moddi3)**
+
+**Adapted by [Sergey Bulaev](https://co.actor) at [Co.Actor](https://co.actor)**
 
 </div>

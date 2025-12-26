@@ -1,116 +1,145 @@
-// Data collector - reads OpenCode storage and returns raw data
+// Data collector - reads Claude Code storage and returns raw data
 
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { xdgData } from "xdg-basedir";
-import type { SessionData, MessageData, ProjectData } from "./types";
+import { homedir } from "node:os";
+import type { ClaudeCodeStats, SessionMessage, HistoryEntry } from "./types";
 
-const OPENCODE_DATA_PATH = join(xdgData!, "opencode/storage");
+const CLAUDE_DATA_PATH = join(homedir(), ".claude");
 
-export async function checkOpenCodeDataExists(): Promise<boolean> {
+export async function checkClaudeCodeDataExists(): Promise<boolean> {
   try {
-    await readdir(OPENCODE_DATA_PATH);
+    await readdir(CLAUDE_DATA_PATH);
     return true;
   } catch {
     return false;
   }
 }
 
-export async function collectSessions(year?: number): Promise<SessionData[]> {
-  const sessionsPath = join(OPENCODE_DATA_PATH, "session");
-
-  try {
-    const projectDirs = await readdir(sessionsPath);
-
-    const results = await Promise.all(
-      projectDirs.map(async (projectDir) => {
-        const projectPath = join(sessionsPath, projectDir);
-        try {
-          const sessionFiles = await readdir(projectPath);
-          return Promise.all(
-            sessionFiles
-              .filter((f) => f.endsWith(".json"))
-              .map(async (sessionFile) => {
-                try {
-                  const session = (await Bun.file(join(projectPath, sessionFile)).json()) as SessionData;
-                  if (year && new Date(session.time.created).getFullYear() !== year) return null;
-                  return session;
-                } catch {
-                  return null;
-                }
-              })
-          );
-        } catch {
-          return [];
-        }
-      })
-    );
-
-    return results.flat().filter((s): s is SessionData => s !== null);
-  } catch (error) {
-    throw new Error(`Failed to read sessions: ${error}`);
-  }
+export async function getClaudeDataPath(): Promise<string> {
+  return CLAUDE_DATA_PATH;
 }
 
-export async function collectMessages(year?: number): Promise<MessageData[]> {
-  const messagesPath = join(OPENCODE_DATA_PATH, "message");
+// Read the stats-cache.json file which contains pre-computed stats
+export async function collectStatsCache(): Promise<ClaudeCodeStats | null> {
+  const statsPath = join(CLAUDE_DATA_PATH, "stats-cache.json");
 
   try {
-    const sessionDirs = await readdir(messagesPath);
-
-    const results = await Promise.all(
-      sessionDirs.map(async (sessionDir) => {
-        const sessionPath = join(messagesPath, sessionDir);
-        try {
-          const messageFiles = await readdir(sessionPath);
-          return Promise.all(
-            messageFiles
-              .filter((f) => f.endsWith(".json"))
-              .map(async (messageFile) => {
-                try {
-                  const message = (await Bun.file(join(sessionPath, messageFile)).json()) as MessageData;
-                  if (year && new Date(message.time.created).getFullYear() !== year) return null;
-                  return message;
-                } catch {
-                  return null;
-                }
-              })
-          );
-        } catch {
-          return [];
-        }
-      })
-    );
-
-    return results.flat().filter((m): m is MessageData => m !== null);
-  } catch (error) {
-    throw new Error(`Failed to read messages: ${error}`);
-  }
-}
-
-export async function collectProjects(): Promise<ProjectData[]> {
-  const projectsPath = join(OPENCODE_DATA_PATH, "project");
-
-  try {
-    const projectFiles = await readdir(projectsPath);
-    const jsonFiles = projectFiles.filter((f) => f.endsWith(".json"));
-
-    // Read all project files in parallel
-    const results = await Promise.all(
-      jsonFiles.map(async (projectFile) => {
-        try {
-          const filePath = join(projectsPath, projectFile);
-          const content = await Bun.file(filePath).json();
-          return content as ProjectData;
-        } catch {
-          return null; // Skip invalid JSON files
-        }
-      })
-    );
-
-    return results.filter((p): p is ProjectData => p !== null);
+    const content = await Bun.file(statsPath).json();
+    return content as ClaudeCodeStats;
   } catch {
-    // Projects directory might not exist
+    return null;
+  }
+}
+
+// Read history.jsonl for prompt/project data
+export async function collectHistory(year?: number): Promise<HistoryEntry[]> {
+  const historyPath = join(CLAUDE_DATA_PATH, "history.jsonl");
+
+  try {
+    const content = await readFile(historyPath, "utf-8");
+    const lines = content.trim().split("\n");
+
+    const entries: HistoryEntry[] = [];
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const entry = JSON.parse(line) as HistoryEntry;
+
+        // Filter by year if specified
+        if (year) {
+          const entryDate = new Date(entry.timestamp);
+          if (entryDate.getFullYear() !== year) continue;
+        }
+
+        entries.push(entry);
+      } catch {
+        // Skip invalid JSON lines
+      }
+    }
+
+    return entries;
+  } catch {
     return [];
   }
+}
+
+// Collect all session messages from project directories
+export async function collectSessionMessages(year?: number): Promise<SessionMessage[]> {
+  const projectsPath = join(CLAUDE_DATA_PATH, "projects");
+
+  try {
+    const projectDirs = await readdir(projectsPath);
+    const allMessages: SessionMessage[] = [];
+
+    for (const projectDir of projectDirs) {
+      const projectPath = join(projectsPath, projectDir);
+
+      try {
+        const files = await readdir(projectPath);
+        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
+
+        for (const jsonlFile of jsonlFiles) {
+          const filePath = join(projectPath, jsonlFile);
+
+          try {
+            const content = await readFile(filePath, "utf-8");
+            const lines = content.trim().split("\n");
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+
+              try {
+                const message = JSON.parse(line);
+
+                // Only process assistant messages with usage data
+                if (message.type === "assistant" && message.message?.usage) {
+                  const timestamp = new Date(message.timestamp);
+
+                  // Filter by year if specified
+                  if (year && timestamp.getFullYear() !== year) continue;
+
+                  allMessages.push({
+                    type: message.type,
+                    sessionId: message.sessionId,
+                    timestamp: message.timestamp,
+                    model: message.message?.model,
+                    usage: message.message?.usage,
+                  });
+                }
+              } catch {
+                // Skip invalid JSON lines
+              }
+            }
+          } catch {
+            // Skip unreadable files
+          }
+        }
+      } catch {
+        // Skip unreadable directories
+      }
+    }
+
+    return allMessages;
+  } catch {
+    return [];
+  }
+}
+
+// Get unique projects from history
+export async function collectProjects(year?: number): Promise<string[]> {
+  const history = await collectHistory(year);
+  const projects = new Set<string>();
+
+  for (const entry of history) {
+    if (entry.project) {
+      // Extract project name from path
+      const projectName = entry.project.split("/").pop() || entry.project;
+      projects.add(projectName);
+    }
+  }
+
+  return Array.from(projects);
 }

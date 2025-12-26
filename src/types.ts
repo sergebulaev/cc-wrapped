@@ -1,60 +1,72 @@
-// Types for OpenCode Wrapped
+// Types for Claude Code Wrapped
 
-export interface SessionData {
-  id: string;
-  version: string;
-  projectID: string;
-  directory: string;
-  title: string;
-  time: {
-    created: number;
-    updated: number;
-  };
-  summary?: {
-    additions: number;
-    deletions: number;
-    files: number;
+// Claude Code stats-cache.json structure
+export interface ClaudeCodeStats {
+  version: number;
+  lastComputedDate: string;
+  dailyActivity: DailyActivity[];
+  dailyModelTokens: DailyModelTokens[];
+  modelUsage: Record<string, ModelUsage>;
+  totalSessions: number;
+  totalMessages: number;
+  longestSession: LongestSession;
+  firstSessionDate: string;
+  hourCounts: Record<string, number>;
+}
+
+export interface DailyActivity {
+  date: string;
+  messageCount: number;
+  sessionCount: number;
+  toolCallCount: number;
+}
+
+export interface DailyModelTokens {
+  date: string;
+  tokensByModel: Record<string, number>;
+}
+
+export interface ModelUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  webSearchRequests: number;
+  costUSD: number;
+  contextWindow: number;
+}
+
+export interface LongestSession {
+  sessionId: string;
+  duration: number;
+  messageCount: number;
+  timestamp: string;
+}
+
+// History entry from history.jsonl
+export interface HistoryEntry {
+  display: string;
+  pastedContents: Record<string, unknown>;
+  timestamp: number;
+  project: string;
+  sessionId: string;
+}
+
+// Session message from project JSONL files
+export interface SessionMessage {
+  type: string;
+  sessionId: string;
+  timestamp: string;
+  model?: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   };
 }
 
-export interface MessageData {
-  id: string;
-  sessionID: string;
-  role: "user" | "assistant";
-  time: {
-    created: number;
-    completed?: number;
-  };
-  parentID?: string;
-  modelID?: string;
-  providerID?: string;
-  mode?: string;
-  agent?: string;
-  cost?: number;
-  tokens?: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cache: {
-      read: number;
-      write: number;
-    };
-  };
-  finish?: string;
-}
-
-export interface ProjectData {
-  id: string;
-  worktree: string;
-  vcsDir: string;
-  vcs: string;
-  time: {
-    created: number;
-    updated: number;
-    initialized?: number;
-  };
-}
-
+// Computed stats for the wrapped image
 export interface ModelStats {
   id: string;
   name: string;
@@ -70,7 +82,7 @@ export interface ProviderStats {
   percentage: number;
 }
 
-export interface OpenCodeStats {
+export interface WrappedStats {
   year: number;
 
   // Time-based
@@ -81,29 +93,32 @@ export interface OpenCodeStats {
   totalSessions: number;
   totalMessages: number;
   totalProjects: number;
+  totalPrompts: number;
 
   // Tokens
   totalInputTokens: number;
   totalOutputTokens: number;
   totalTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
 
-  // Cost (only from OpenCode/Zen provider)
+  // Cost (from Claude API)
   totalCost: number;
-  hasZenUsage: boolean;
+  hasCostData: boolean;
 
   // Models (sorted by usage)
   topModels: ModelStats[];
 
-  // Providers (sorted by usage)
+  // Providers (sorted by usage) - for Claude Code this will always be Anthropic
   topProviders: ProviderStats[];
 
   // Streak
   maxStreak: number;
   currentStreak: number;
-  maxStreakDays: Set<string>; // Days that form the max streak (for heatmap highlighting)
+  maxStreakDays: Set<string>;
 
   // Activity heatmap (for the year)
-  dailyActivity: Map<string, number>; // "2025-01-15" -> count
+  dailyActivity: Map<string, number>;
 
   // Most active day
   mostActiveDay: {
@@ -114,6 +129,15 @@ export interface OpenCodeStats {
 
   // Weekday activity distribution (0=Sunday, 6=Saturday)
   weekdayActivity: WeekdayActivity;
+
+  // Top projects
+  topProjects: ProjectStats[];
+
+  // Longest session
+  longestSession: {
+    duration: number;
+    messageCount: number;
+  } | null;
 }
 
 export interface WeekdayActivity {
@@ -121,6 +145,12 @@ export interface WeekdayActivity {
   mostActiveDay: number;
   mostActiveDayName: string;
   maxCount: number;
+}
+
+export interface ProjectStats {
+  name: string;
+  promptCount: number;
+  percentage: number;
 }
 
 export interface CliArgs {
