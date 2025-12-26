@@ -181,12 +181,25 @@ export async function calculateStats(year: number, remoteData: RemoteData[] = []
   const dailyActivity = new Map<string, number>();
   const weekdayCounts: [number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0];
 
-  // First, add session-based activity (this includes data not in stats-cache)
+  // First, add activity from history.jsonl (user prompts)
+  for (const entry of mergedHistory) {
+    const date = new Date(entry.timestamp);
+    if (date.getFullYear() !== year) continue;
+    const dateKey = formatDateKey(date);
+    dailyActivity.set(dateKey, (dailyActivity.get(dateKey) || 0) + 1);
+    weekdayCounts[date.getDay()]++;
+  }
+
+  // Then add session-based activity (includes more granular message counts)
   for (const [dateKey, data] of mergedSessionActivity.entries()) {
     if (dateKey.startsWith(String(year))) {
-      dailyActivity.set(dateKey, data.messageCount);
-      const date = new Date(dateKey);
-      weekdayCounts[date.getDay()] += data.messageCount;
+      // Use higher of history count or session count
+      const existing = dailyActivity.get(dateKey) || 0;
+      if (data.messageCount > existing) {
+        weekdayCounts[new Date(dateKey).getDay()] -= existing;
+        weekdayCounts[new Date(dateKey).getDay()] += data.messageCount;
+        dailyActivity.set(dateKey, data.messageCount);
+      }
     }
   }
 
