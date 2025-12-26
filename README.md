@@ -26,6 +26,10 @@ Adapted for Claude Code by [Sergey Bulaev](https://github.com/sergebulaev) (crea
 - **Adapted for Claude Code** — Reads data from `~/.claude/` directory instead of OpenCode
 - **Cached tokens included** — Total token count now includes cache read/write tokens for accurate usage stats
 - **Image upload** — Upload your wrapped image to get a shareable link (via catbox.moe)
+- **Remote hosts support** — Collect stats from multiple machines via SSH with `--remote` flag
+- **Multi-directory support** — Reads from both `~/.claude/` and `~/.config/claude/` (new Claude Code location)
+- **Cost calculation** — Calculates costs using Anthropic's model pricing when not available in stats-cache
+- **Complete activity history** — Scans session files and history.jsonl for full activity graph
 
 ---
 
@@ -53,11 +57,20 @@ cc-wrapped
 
 ## Usage Options
 
-| Option          | Description                          |
-| --------------- | ------------------------------------ |
-| `--year, -y`    | Generate wrapped for a specific year |
-| `--help, -h`    | Show help message                    |
-| `--version, -v` | Show version number                  |
+| Option            | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `--year, -y`      | Generate wrapped for a specific year               |
+| `--remote, -r`    | Include stats from remote hosts (comma-separated)  |
+| `--help, -h`      | Show help message                                  |
+| `--version, -v`   | Show version number                                |
+
+### Examples
+
+```bash
+cc-wrapped                                    # Generate current year wrapped
+cc-wrapped --year 2025                        # Generate 2025 wrapped
+cc-wrapped --remote user@host1,user@host2     # Include remote hosts
+```
 
 ## Features
 
@@ -93,10 +106,11 @@ The tool generates:
 
 ## Data Source
 
-Claude Code Wrapped reads data from your local Claude Code installation:
+Claude Code Wrapped reads data from your local Claude Code installation. It automatically searches both locations:
 
 ```
-~/.claude/
+~/.claude/              # Old default location
+~/.config/claude/       # New default location (since late 2025)
 ```
 
 **Data sources used:**
@@ -104,7 +118,7 @@ Claude Code Wrapped reads data from your local Claude Code installation:
 - `history.jsonl` - Prompt history and project data
 - `projects/` - Session data for detailed analysis
 
-No data is sent anywhere. Everything is processed locally.
+Data from multiple directories is automatically merged. No data is sent anywhere — everything is processed locally.
 
 ## Building
 
