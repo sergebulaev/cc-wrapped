@@ -86,7 +86,7 @@ export async function calculateStats(year: number): Promise<WrappedStats> {
     totalSessions = uniqueSessions.size;
   }
 
-  const totalTokens = totalInputTokens + totalOutputTokens;
+  const totalTokens = totalInputTokens + totalOutputTokens + totalCacheReadTokens + totalCacheWriteTokens;
   const totalPrompts = history.length;
   const totalProjects = projects.length;
 
