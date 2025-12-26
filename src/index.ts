@@ -163,13 +163,35 @@ async function main() {
     }
   }
 
+  // Upload option
+  const shouldUpload = await p.confirm({
+    message: "Upload image to get a shareable link?",
+    initialValue: true,
+  });
+
+  let uploadedUrl: string | null = null;
+
+  if (!p.isCancel(shouldUpload) && shouldUpload) {
+    const uploadSpinner = p.spinner();
+    uploadSpinner.start("Uploading image...");
+
+    try {
+      uploadedUrl = await uploadImage(image.fullSize);
+      uploadSpinner.stop("Image uploaded!");
+      p.log.success(`Link: ${uploadedUrl}`);
+    } catch (error) {
+      uploadSpinner.stop("Upload failed");
+      p.log.warn(`Could not upload: ${error}`);
+    }
+  }
+
   const shouldShare = await p.confirm({
-    message: "Share on X (Twitter)? Don't forget to attach your image!",
+    message: "Share on X (Twitter)?",
     initialValue: true,
   });
 
   if (!p.isCancel(shouldShare) && shouldShare) {
-    const tweetUrl = generateTweetUrl(stats);
+    const tweetUrl = generateTweetUrl(stats, uploadedUrl);
     const opened = await openUrl(tweetUrl);
     if (opened) {
       p.log.success("Opened X in your browser.");
@@ -183,8 +205,8 @@ async function main() {
   process.exit(0);
 }
 
-function generateTweetUrl(stats: WrappedStats): string {
-  const text = [
+function generateTweetUrl(stats: WrappedStats, imageUrl?: string | null): string {
+  const lines = [
     `my ${stats.year} claude code wrapped:`,
     ``,
     `${formatNumber(stats.totalSessions)} sessions`,
@@ -193,11 +215,39 @@ function generateTweetUrl(stats: WrappedStats): string {
     `${stats.maxStreak} day streak`,
     ``,
     `get yours: npx cc-wrapped`,
-  ].join("\n");
+  ];
+
+  if (imageUrl) {
+    lines.push(``, imageUrl);
+  }
 
   const url = new URL("https://x.com/intent/tweet");
-  url.searchParams.set("text", text);
+  url.searchParams.set("text", lines.join("\n"));
   return url.toString();
+}
+
+async function uploadImage(imageBuffer: Buffer): Promise<string> {
+  // Using catbox.moe - free, no compression, no account needed
+  const formData = new FormData();
+  formData.append("reqtype", "fileupload");
+  formData.append("fileToUpload", new Blob([imageBuffer], { type: "image/png" }), "cc-wrapped.png");
+
+  const response = await fetch("https://catbox.moe/user/api.php", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.status}`);
+  }
+
+  const url = await response.text();
+
+  if (!url.startsWith("https://")) {
+    throw new Error(`Invalid response: ${url}`);
+  }
+
+  return url.trim();
 }
 
 async function openUrl(url: string): Promise<boolean> {
