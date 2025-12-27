@@ -7,7 +7,7 @@ import { parseArgs } from "node:util";
 import { checkClaudeCodeDataExists, getClaudeDataPath } from "./collector";
 import { calculateStats } from "./stats";
 import { collectFromAllRemoteHosts, type RemoteData } from "./remote-collector";
-import { generateImage } from "./image/generator";
+import { generateImage, type TemplateStyle } from "./image/generator";
 import { displayInTerminal, getTerminalName } from "./terminal/display";
 import { copyImageToClipboard } from "./clipboard";
 import { isWrappedAvailable } from "./utils/dates";
@@ -28,6 +28,7 @@ USAGE:
 OPTIONS:
   --year <YYYY>       Generate wrapped for a specific year (default: current year)
   --remote <hosts>    Include stats from remote hosts (comma-separated)
+  --style <style>     Image style: "default" or "dark" (default: default)
   --help, -h          Show this help message
   --version, -v       Show version number
 
@@ -35,6 +36,7 @@ EXAMPLES:
   cc-wrapped                                      # Generate current year wrapped
   cc-wrapped --year 2025                          # Generate 2025 wrapped
   cc-wrapped --remote user@host1,user@host2       # Include remote hosts
+  cc-wrapped --style dark                         # Use dark ccusage-style theme
 `);
 }
 
@@ -45,6 +47,7 @@ async function main() {
     options: {
       year: { type: "string", short: "y" },
       remote: { type: "string", short: "r" },
+      style: { type: "string", short: "s" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -65,6 +68,7 @@ async function main() {
   p.intro("claude code wrapped");
 
   const requestedYear = values.year ? parseInt(values.year, 10) : new Date().getFullYear();
+  const templateStyle: TemplateStyle = values.style === "dark" ? "dark" : "default";
 
   const availability = isWrappedAvailable(requestedYear);
   if (!availability.available) {
@@ -145,7 +149,7 @@ async function main() {
 
   let image: { fullSize: Buffer; displaySize: Buffer };
   try {
-    image = await generateImage(stats);
+    image = await generateImage(stats, templateStyle);
   } catch (error) {
     spinner.stop("Failed to generate image");
     p.cancel(`Error generating image: ${error}`);
